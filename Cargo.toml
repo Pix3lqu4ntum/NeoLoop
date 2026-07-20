@@ -1,6 +1,15 @@
-[package]
-name = "NeoLoop"
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/transform",
+    "crates/sqlgen",
+    "crates/layout",
+    "crates/mcp",
+    "crates/gui",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
+license = "GPL-3.0-or-later"
