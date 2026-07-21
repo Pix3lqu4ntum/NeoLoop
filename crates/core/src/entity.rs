@@ -86,3 +86,66 @@ pub enum DataType {
     // Looping Equivalent : Libre
     Free(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entity_stores_attribute_ids_in_order() {
+        use crate::AttributeId;
+        use slotmap::SlotMap;
+
+        let mut attributes: SlotMap<AttributeId, Attribute> = SlotMap::with_key();
+        let id_a = attributes.insert(Attribute {
+            conceptual_name: "id".into(),
+            logic_name: "id".into(),
+            data_type: DataType::Counter,
+            is_nullable: false,
+            is_unique: true,
+            is_identifier: true,
+            complement: String::new(),
+            comment: String::new(),
+        });
+        let id_b = attributes.insert(Attribute {
+            conceptual_name: "name".into(),
+            logic_name: "name".into(),
+            data_type: DataType::Variable(TextProperties {
+                length: Some(255),
+                collation: None,
+            }),
+            is_nullable: false,
+            is_unique: false,
+            is_identifier: false,
+            complement: String::new(),
+            comment: String::new(),
+        });
+
+        let entity = Entity {
+            name: "Employee".into(),
+            logic_name: "employee".into(),
+            attributes: vec![id_a, id_b],
+            comment: String::new(),
+            is_fictitious: false,
+        };
+
+        // Order must be preserved — this is what the GUI will rely on
+        // to display attributes in the same order the user arranged them.
+        assert_eq!(entity.attributes, vec![id_a, id_b]);
+    }
+
+    #[test]
+    fn array_data_type_can_nest_recursively() {
+        let nested = DataType::Array(Box::new(DataType::Array(Box::new(DataType::Integer(
+            IntegerWidth::Bits32,
+        )))));
+
+        match nested {
+            DataType::Array(inner) => match *inner {
+                DataType::Array(_) => {} // ok, one level of nesting confirmed
+                _ => panic!("expected nested Array"),
+            },
+            _ => panic!("expected Array"),
+        }
+    }
+}

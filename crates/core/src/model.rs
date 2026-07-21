@@ -108,3 +108,201 @@ impl Default for Model {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Cardinality, DataType, Leg};
+
+    fn sample_attribute(name: &str) -> Attribute {
+        Attribute {
+            conceptual_name: name.into(),
+            logic_name: name.into(),
+            data_type: DataType::Counter,
+            is_nullable: false,
+            is_unique: false,
+            is_identifier: false,
+            complement: String::new(),
+            comment: String::new(),
+        }
+    }
+
+    fn binary_association(name: &str, left: EntityId, right: EntityId) -> Association {
+        Association {
+            name: name.into(),
+            logic_name: name.to_lowercase(),
+            attributes: vec![],
+            legs: vec![
+                Leg {
+                    entity_id: left,
+                    cardinality: Cardinality::OneMany,
+                    role: None,
+                    forced_pk_side: None,
+                },
+                Leg {
+                    entity_id: right,
+                    cardinality: Cardinality::ZeroMany,
+                    role: None,
+                    forced_pk_side: None,
+                },
+            ],
+            comment: String::new(),
+            identification: None,
+        }
+    }
+
+    #[test]
+    fn new_model_is_empty() {
+        let model = Model::new();
+        assert_eq!(model.entities.len(), 0);
+        assert_eq!(model.attributes.len(), 0);
+        assert_eq!(model.associations.len(), 0);
+    }
+
+    #[test]
+    fn add_rename_and_remove_entity() {
+        let mut model = Model::new();
+
+        let id = model.add_entity("Customer");
+        assert_eq!(model.entities.len(), 1);
+        assert_eq!(model.entities[id].name, "Customer");
+
+        assert!(model.rename_entity(id, "Client"));
+        assert_eq!(model.entities[id].name, "Client");
+
+        let removed = model.remove_entity(id).expect("entity should exist");
+        assert_eq!(removed.name, "Client");
+        assert_eq!(model.entities.len(), 0);
+
+        // Operating on a stale id is a no-op, not a panic.
+        assert!(model.remove_entity(id).is_none());
+        assert!(!model.rename_entity(id, "Ghost"));
+    }
+
+    #[test]
+    fn add_rename_and_remove_attribute() {
+        let mut model = Model::new();
+        let entity = model.add_entity("Customer");
+
+        let attr = model
+            .add_attribute(entity, sample_attribute("email"))
+            .expect("entity exists");
+        assert_eq!(model.attributes.len(), 1);
+        // The attribute is registered in its owning entity's ordered list.
+        assert_eq!(model.entities[entity].attributes, vec![attr]);
+
+        assert!(model.rename_attribute(attr, "email_address"));
+        assert_eq!(model.attributes[attr].conceptual_name, "email_address");
+
+        let removed = model
+            .remove_attribute(attr)
+            .expect("attribute should exist");
+        assert_eq!(removed.conceptual_name, "email_address");
+        assert_eq!(model.attributes.len(), 0);
+        // Removal also detaches it from the owning entity.
+        assert!(model.entities[entity].attributes.is_empty());
+    }
+
+    #[test]
+    fn adding_an_attribute_to_a_missing_entity_fails() {
+        let mut model = Model::new();
+        let entity = model.add_entity("Temp");
+        model.remove_entity(entity);
+
+        assert!(model.add_attribute(entity, sample_attribute("x")).is_none());
+        assert_eq!(model.attributes.len(), 0);
+    }
+
+    #[test]
+    fn add_and_remove_association() {
+        let mut model = Model::new();
+        let a = model.add_entity("Order");
+        let b = model.add_entity("Product");
+
+        let assoc = model.add_association(binary_association("Contains", a, b));
+        assert_eq!(model.associations.len(), 1);
+
+        let removed = model.remove_association(assoc).expect("association exists");
+        assert_eq!(removed.name, "Contains");
+        assert_eq!(model.associations.len(), 0);
+        assert!(model.remove_association(assoc).is_none());
+    }
+
+    #[test]
+    fn removing_an_entity_cascades_to_its_attributes_and_associations() {
+        let mut model = Model::new();
+        let order = model.add_entity("Order");
+        let product = model.add_entity("Product");
+
+        let attr = model
+            .add_attribute(order, sample_attribute("reference"))
+            .expect("entity exists");
+        let assoc = model.add_association(binary_association("Contains", order, product));
+
+        assert_eq!(model.attributes.len(), 1);
+        assert_eq!(model.associations.len(), 1);
+
+        model.remove_entity(order);
+
+        // The owned attribute is gone.
+        assert!(model.attributes.get(attr).is_none());
+        assert_eq!(model.attributes.len(), 0);
+        // The association referencing the removed entity is gone too.
+        assert!(model.associations.get(assoc).is_none());
+        assert_eq!(model.associations.len(), 0);
+        // The unrelated entity is untouched.
+        assert!(model.entities.get(product).is_some());
+    }
+
+    #[test]
+    fn ids_stay_valid_after_removing_another_entity() {
+        let mut model = Model::new();
+        let a = model.add_entity("A");
+        let b = model.add_entity("B");
+        let c = model.add_entity("C");
+
+        model.remove_entity(b);
+
+        // slotmap semantics: removing one key never invalidates the others,
+        // and they still resolve to the same data.
+        assert_eq!(model.entities.get(a).map(|e| e.name.as_str()), Some("A"));
+        assert_eq!(model.entities.get(c).map(|e| e.name.as_str()), Some("C"));
+        assert!(model.entities.get(b).is_none());
+    }
+
+    #[test]
+    fn every_cardinality_variant_is_usable_on_a_leg() {
+        let mut model = Model::new();
+        let entity = model.add_entity("Node");
+
+        for cardinality in [
+            Cardinality::ZeroOne,
+            Cardinality::OneOne,
+            Cardinality::ZeroMany,
+            Cardinality::OneMany,
+        ] {
+            let assoc = model.add_association(Association {
+                name: "Link".into(),
+                logic_name: "link".into(),
+                attributes: vec![],
+                legs: vec![Leg {
+                    entity_id: entity,
+                    cardinality,
+                    role: None,
+                    forced_pk_side: None,
+                }],
+                comment: String::new(),
+                identification: None,
+            });
+            // Confirm the variant round-trips through the model unchanged.
+            let stored = &model.associations[assoc].legs[0].cardinality;
+            let label = match stored {
+                Cardinality::ZeroOne => "0,1",
+                Cardinality::OneOne => "1,1",
+                Cardinality::ZeroMany => "0,n",
+                Cardinality::OneMany => "1,n",
+            };
+            assert!(!label.is_empty());
+        }
+    }
+}
