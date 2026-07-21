@@ -1,10 +1,11 @@
 use slotmap::SlotMap;
 
-use crate::{Attribute, AttributeId, Entity, EntityId};
+use crate::{Association, AssociationId, Attribute, AttributeId, Entity, EntityId};
 
 pub struct Model {
     pub entities: SlotMap<EntityId, Entity>,
     pub attributes: SlotMap<AttributeId, Attribute>,
+    pub associations: SlotMap<AssociationId, Association>,
 }
 
 impl Model {
@@ -12,6 +13,7 @@ impl Model {
         Self {
             entities: SlotMap::with_key(),
             attributes: SlotMap::with_key(),
+            associations: SlotMap::with_key(),
         }
     }
 
@@ -40,13 +42,16 @@ impl Model {
         }
     }
 
-    /// Remove an entity and the attributes it owns, returning the entity if
-    /// it existed.
+    /// Remove an entity and everything that depends on it: the attributes it
+    /// owns and any association that references it through a leg. Returns the
+    /// entity if it existed.
     pub fn remove_entity(&mut self, id: EntityId) -> Option<Entity> {
         let entity = self.entities.remove(id)?;
         for attribute_id in &entity.attributes {
             self.attributes.remove(*attribute_id);
         }
+        self.associations
+            .retain(|_, association| association.legs.iter().all(|leg| leg.entity_id != id));
         Some(entity)
     }
 
@@ -83,6 +88,18 @@ impl Model {
             entity.attributes.retain(|attribute_id| *attribute_id != id);
         }
         Some(attribute)
+    }
+
+    // ---- Associations ---------------------------------------------------
+
+    /// Store an association and return its id.
+    pub fn add_association(&mut self, association: Association) -> AssociationId {
+        self.associations.insert(association)
+    }
+
+    /// Remove an association, returning it if it existed.
+    pub fn remove_association(&mut self, id: AssociationId) -> Option<Association> {
+        self.associations.remove(id)
     }
 }
 
